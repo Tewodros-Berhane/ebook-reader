@@ -38,13 +38,13 @@ export class GoogleDriveClient {
     const folderClause = folderId ? ` and '${folderId}' in parents` : "";
     const query = encodeURIComponent(`mimeType='application/epub+zip' and trashed=false${folderClause}`);
     const fields = encodeURIComponent("files(id,name,mimeType,modifiedTime,size)");
-    const url = `${DRIVE_API_BASE}/files?q=${query}&fields=${fields}`;
+    const url = `${DRIVE_API_BASE}/files?q=${query}&fields=${fields}&includeItemsFromAllDrives=true&supportsAllDrives=true`;
     const data = await this.request<{ files: DriveFile[] }>(url);
     return data.files ?? [];
   }
 
   async downloadFile(fileId: string): Promise<Response> {
-    const url = `${DRIVE_API_BASE}/files/${fileId}?alt=media`;
+    const url = `${DRIVE_API_BASE}/files/${fileId}?alt=media&supportsAllDrives=true`;
     return fetch(url, {
       headers: {
         Authorization: `Bearer ${this.accessToken}`,

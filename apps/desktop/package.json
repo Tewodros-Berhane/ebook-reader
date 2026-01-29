@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "concurrently -k -n next,electron -c cyan,magenta \"pnpm dev:next\" \"pnpm dev:electron\"",
     "dev:next": "next dev -p 3000",
-    "dev:electron": "wait-on http://localhost:3000 && electron -r tsx/register src/electron/main.ts",
+    "dev:electron": "wait-on http://localhost:3000 && electron -r tsx/cjs src/electron/main.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -23,7 +23,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
-    "electron": "^40.0.0",
+    "dotenv": "^17.2.3",
+    "electron": "^40.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",

@@ -2,6 +2,13 @@ import type { DriveFile } from "../api/drive-client";
 import type { LocalBook } from "../types/index";
 import { db } from "./schema";
 
+export const BOOKS_CHANGED_EVENT = "lumina:books-changed";
+
+function notifyBooksChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(BOOKS_CHANGED_EVENT));
+}
+
 export function driveFileToLocalBook(file: DriveFile): LocalBook {
   const timestamp = file.modifiedTime ? Date.parse(file.modifiedTime) : Date.now();
   return {
@@ -29,6 +36,7 @@ export async function upsertBooksFromDrive(files: DriveFile[]): Promise<void> {
     };
   });
   await db.books.bulkPut(merged);
+  notifyBooksChanged();
 }
 
 export async function listLocalBooks(): Promise<LocalBook[]> {
@@ -48,6 +56,7 @@ export async function setBookDownloadStatus(
     downloadStatus: status,
     ...(localPath !== undefined ? { localPath } : {}),
   });
+  notifyBooksChanged();
 }
 
 export async function updateBookProgress(fileId: string, cfi: string): Promise<void> {
@@ -56,6 +65,7 @@ export async function updateBookProgress(fileId: string, cfi: string): Promise<v
     timestamp: Date.now(),
     isDirty: true,
   });
+  notifyBooksChanged();
 }
 
 export async function applyCloudProgress(fileId: string, cfi: string, ts: number): Promise<void> {
@@ -64,6 +74,7 @@ export async function applyCloudProgress(fileId: string, cfi: string, ts: number
     timestamp: ts,
     isDirty: false,
   });
+  notifyBooksChanged();
 }
 
 export async function markBooksClean(fileIds: string[]): Promise<void> {
@@ -72,4 +83,5 @@ export async function markBooksClean(fileIds: string[]): Promise<void> {
       await db.books.update(fileId, { isDirty: false });
     }
   });
+  notifyBooksChanged();
 }

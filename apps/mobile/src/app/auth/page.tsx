@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppShell, PrimaryButton } from "@lumina/ui";
 import { createWebTokenStore } from "@lumina/core";
 import { Capacitor } from "@capacitor/core";
@@ -9,15 +10,18 @@ import { GoogleAuth } from "@codetrix-studio/capacitor-google-auth";
 
 export default function AuthPage() {
   const tokenStore = useMemo(() => createWebTokenStore(), []);
+  const router = useRouter();
   const [accessToken, setAccessToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const existing = tokenStore.getTokens();
+
+  const androidClientId = process.env.NEXT_PUBLIC_ANDROID_CLIENT_ID ?? "";
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     try {
       GoogleAuth.initialize({
-        clientId: "YOUR_ANDROID_CLIENT_ID",
+        clientId: androidClientId,
         scopes: ["https://www.googleapis.com/auth/drive.appdata", "https://www.googleapis.com/auth/drive.readonly"],
         grantOfflineAccess: true,
       });
@@ -32,6 +36,7 @@ export default function AuthPage() {
     tokenStore.setTokens({ accessToken: token });
     setAccessToken("");
     setError(null);
+    router.push("/");
   };
 
   const handleClear = () => {
@@ -46,6 +51,10 @@ export default function AuthPage() {
         setError("Native Google Sign-In requires Capacitor on device.");
         return;
       }
+      if (!androidClientId) {
+        setError("Missing NEXT_PUBLIC_ANDROID_CLIENT_ID in env.");
+        return;
+      }
       const result = await GoogleAuth.signIn();
       if (!result?.authentication?.accessToken) {
         throw new Error("No access token received.");
@@ -54,6 +63,7 @@ export default function AuthPage() {
         accessToken: result.authentication.accessToken,
         refreshToken: result.authentication.refreshToken,
       });
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "OAuth failed.");
     }

@@ -8,8 +8,10 @@ import { createPickerConfigStore } from "@lumina/core";
 export default function SettingsPage() {
   const pickerStore = useMemo(() => createPickerConfigStore(), []);
   const existing = pickerStore.getConfig();
-  const [apiKey, setApiKey] = useState(existing?.apiKey ?? "");
-  const [appId, setAppId] = useState(existing?.appId ?? "");
+  const defaultApiKey = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
+  const defaultAppId = process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID ?? "";
+  const [apiKey, setApiKey] = useState(existing?.apiKey ?? defaultApiKey);
+  const [appId, setAppId] = useState(existing?.appId ?? defaultAppId);
 
   const handleSavePicker = () => {
     if (!apiKey.trim()) return;

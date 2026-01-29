@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppShell, PrimaryButton } from "@lumina/ui";
 import { createWebTokenStore } from "@lumina/core";
 
 export default function AuthPage() {
   const tokenStore = useMemo(() => createWebTokenStore(), []);
+  const router = useRouter();
   const [accessToken, setAccessToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const existing = tokenStore.getTokens();
@@ -17,12 +19,16 @@ export default function AuthPage() {
     tokenStore.setTokens({ accessToken: token });
     setAccessToken("");
     setError(null);
+    router.push("/");
   };
 
   const handleClear = () => {
     tokenStore.clearTokens();
     setError(null);
   };
+
+  const desktopClientId = process.env.NEXT_PUBLIC_DESKTOP_CLIENT_ID ?? "";
+  const desktopRedirectUri = process.env.NEXT_PUBLIC_DESKTOP_REDIRECT_URI ?? "http://localhost:4200/oauth2callback";
 
   const handleOAuth = async () => {
     try {
@@ -31,10 +37,13 @@ export default function AuthPage() {
         setError("Electron API not available. Run via Electron shell.");
         return;
       }
+      if (!desktopClientId) {
+        setError("Missing desktop client ID in env.");
+        return;
+      }
       const tokens = await window.electronAPI.startDesktopOAuth({
-        clientId: "YOUR_DESKTOP_CLIENT_ID",
-        clientSecret: "YOUR_DESKTOP_CLIENT_SECRET",
-        redirectUri: "http://localhost:4200/oauth2callback",
+        clientId: desktopClientId,
+        redirectUri: desktopRedirectUri,
         scopes: ["https://www.googleapis.com/auth/drive.appdata", "https://www.googleapis.com/auth/drive.readonly"],
       });
       tokenStore.setTokens({
@@ -42,6 +51,7 @@ export default function AuthPage() {
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
       });
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "OAuth failed.");
     }

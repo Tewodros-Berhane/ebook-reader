@@ -1,13 +1,21 @@
+import dotenv from "dotenv";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import path from "node:path";
 import { createServer } from "node:http";
-import { URL } from "node:url";
+import { URL, fileURLToPath } from "node:url";
+
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 type OAuthConfig = {
   clientId: string;
-  clientSecret: string;
   redirectUri: string;
   scopes: string[];
+};
+
+type RefreshConfig = {
+  clientId: string;
+  refreshToken: string;
 };
 
 type TokenPayload = {
@@ -17,6 +25,9 @@ type TokenPayload = {
 };
 
 const TOKEN_FILE = "auth.json";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function getTokenPath() {
   return path.join(app.getPath("userData"), TOKEN_FILE);
@@ -41,19 +52,24 @@ function buildAuthUrl(config: OAuthConfig) {
 }
 
 async function exchangeCode(config: OAuthConfig, code: string): Promise<TokenPayload> {
+  const clientSecret = process.env.LUMINA_DESKTOP_CLIENT_SECRET;
+  if (!clientSecret) {
+    throw new Error("Missing LUMINA_DESKTOP_CLIENT_SECRET in env.");
+  }
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
       client_id: config.clientId,
-      client_secret: config.clientSecret,
+      client_secret: clientSecret,
       redirect_uri: config.redirectUri,
       grant_type: "authorization_code",
     }),
   });
   if (!res.ok) {
-    throw new Error(`Token exchange failed (${res.status}).`);
+    const errorText = await res.text();
+    throw new Error(`Token exchange failed (${res.status}): ${errorText}`);
   }
   const data = (await res.json()) as {
     access_token: string;
@@ -65,6 +81,38 @@ async function exchangeCode(config: OAuthConfig, code: string): Promise<TokenPay
     refreshToken: data.refresh_token,
     expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
   };
+}
+
+async function refreshAccessToken(payload: RefreshConfig): Promise<TokenPayload> {
+  const clientSecret = process.env.LUMINA_DESKTOP_CLIENT_SECRET;
+  if (!clientSecret) {
+    throw new Error("Missing LUMINA_DESKTOP_CLIENT_SECRET in env.");
+  }
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: payload.clientId,
+      client_secret: clientSecret,
+      refresh_token: payload.refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Token refresh failed (${res.status}): ${errorText}`);
+  }
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in?: number;
+  };
+  const tokens: TokenPayload = {
+    accessToken: data.access_token,
+    refreshToken: payload.refreshToken,
+    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+  };
+  await saveTokens(tokens);
+  return tokens;
 }
 
 async function startLoopbackOAuth(config: OAuthConfig): Promise<TokenPayload> {
@@ -102,6 +150,10 @@ async function startLoopbackOAuth(config: OAuthConfig): Promise<TokenPayload> {
 
 ipcMain.handle("oauth:desktop", async (_event, payload: OAuthConfig) => {
   return startLoopbackOAuth(payload);
+});
+
+ipcMain.handle("oauth:refresh", async (_event, payload: RefreshConfig) => {
+  return refreshAccessToken(payload);
 });
 
 function createWindow() {

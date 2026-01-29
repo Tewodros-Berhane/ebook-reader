@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell, BookCard, EmptyState, PrimaryButton } from "@lumina/ui";
 import {
+  BOOKS_CHANGED_EVENT,
   createDriveFolderStore,
   createPickerConfigStore,
   createWebTokenStore,
@@ -25,22 +26,80 @@ export function LibraryClient() {
   const tokenStore = useMemo(() => createWebTokenStore(), []);
   const folderStore = useMemo(() => createDriveFolderStore(), []);
   const pickerStore = useMemo(() => createPickerConfigStore(), []);
+  const desktopClientId = process.env.NEXT_PUBLIC_DESKTOP_CLIENT_ID ?? "";
   const router = useRouter();
   const [books, setBooks] = useState<LocalBook[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [folderId, setFolderId] = useState<string | null>(null);
+  const [isAuthed, setIsAuthed] = useState(false);
+  const autoSyncRef = useRef(false);
+  const autoProgressRef = useRef(false);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const local = await listLocalBooks();
     setBooks(local);
-  };
+  }, []);
 
   useEffect(() => {
     setFolderId(folderStore.getFolderId());
+    setIsAuthed(Boolean(tokenStore.getTokens()?.accessToken));
     refresh();
   }, []);
+
+  useEffect(() => {
+    const tokens = tokenStore.getTokens();
+    if (!tokens?.accessToken || autoSyncRef.current) return;
+    autoSyncRef.current = true;
+    handleSync().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => {
+      refresh().catch(() => undefined);
+    };
+    window.addEventListener(BOOKS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(BOOKS_CHANGED_EVENT, handler);
+  }, [refresh]);
+
+  useEffect(() => {
+    const hasDirty = books.some((book) => book.isDirty);
+    if (!hasDirty) {
+      autoProgressRef.current = false;
+      return;
+    }
+    if (autoProgressRef.current || syncing || loading || !isAuthed) return;
+    autoProgressRef.current = true;
+    handleSyncProgress().catch(() => undefined);
+  }, [books, syncing, loading, isAuthed]);
+
+  const refreshDesktopToken = async (refreshToken: string) => {
+    if (!window.electronAPI || !desktopClientId) {
+      throw new Error("Desktop refresh not available.");
+    }
+    return window.electronAPI.refreshDesktopToken({
+      clientId: desktopClientId,
+      refreshToken,
+    });
+  };
+
+  const ensureAccessToken = async () => {
+    const tokens = tokenStore.getTokens();
+    if (!tokens?.accessToken) return null;
+    if (tokens.expiresAt && Date.now() > tokens.expiresAt - 60_000 && tokens.refreshToken) {
+      const refreshed = await refreshDesktopToken(tokens.refreshToken);
+      tokenStore.setTokens({
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+        expiresAt: refreshed.expiresAt,
+      });
+      setIsAuthed(true);
+      return refreshed.accessToken;
+    }
+    return tokens.accessToken;
+  };
 
   const openFolderPicker = async () => {
     const tokens = tokenStore.getTokens();
@@ -104,39 +163,97 @@ export function LibraryClient() {
   };
 
   const handleSync = async () => {
-    const tokens = tokenStore.getTokens();
-    if (!tokens?.accessToken) {
+    const accessToken = await ensureAccessToken();
+    if (!accessToken) {
       setError("Missing access token.");
       return;
     }
+    setIsAuthed(true);
     setError(null);
     setLoading(true);
     try {
-      const client = new GoogleDriveClient(tokens.accessToken);
+      const client = new GoogleDriveClient(accessToken);
       const files = await client.listEpubFiles(folderStore.getFolderId() ?? undefined);
       await upsertBooksFromDrive(files);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sync failed.");
+      const message = err instanceof Error ? err.message : "Sync failed.";
+      if (message.includes("401") || message.includes("UNAUTHENTICATED") || message.includes("authError")) {
+        try {
+          const tokens = tokenStore.getTokens();
+          if (tokens?.refreshToken) {
+            const refreshed = await refreshDesktopToken(tokens.refreshToken);
+            tokenStore.setTokens({
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+              expiresAt: refreshed.expiresAt,
+            });
+            setIsAuthed(true);
+            const client = new GoogleDriveClient(refreshed.accessToken);
+            const files = await client.listEpubFiles(folderStore.getFolderId() ?? undefined);
+            await upsertBooksFromDrive(files);
+            await refresh();
+            return;
+          }
+        } catch (refreshErr) {
+          tokenStore.clearTokens();
+          setIsAuthed(false);
+          setError("Session expired. Please reconnect Drive.");
+          return;
+        }
+        tokenStore.clearTokens();
+        setIsAuthed(false);
+        setError("Session expired. Please reconnect Drive.");
+        return;
+      }
+      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleSyncProgress = async () => {
-    const tokens = tokenStore.getTokens();
-    if (!tokens?.accessToken) {
+    const accessToken = await ensureAccessToken();
+    if (!accessToken) {
       setError("Missing access token.");
       return;
     }
     setError(null);
     setSyncing(true);
     try {
-      const client = new GoogleDriveClient(tokens.accessToken);
+      const client = new GoogleDriveClient(accessToken);
       await syncWithCloud(client, "Desktop");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sync failed.");
+      const message = err instanceof Error ? err.message : "Sync failed.";
+      if (message.includes("401") || message.includes("UNAUTHENTICATED") || message.includes("authError")) {
+        try {
+          const tokens = tokenStore.getTokens();
+          if (tokens?.refreshToken) {
+            const refreshed = await refreshDesktopToken(tokens.refreshToken);
+            tokenStore.setTokens({
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+              expiresAt: refreshed.expiresAt,
+            });
+            setIsAuthed(true);
+            const client = new GoogleDriveClient(refreshed.accessToken);
+            await syncWithCloud(client, "Desktop");
+            await refresh();
+            return;
+          }
+        } catch (refreshErr) {
+          tokenStore.clearTokens();
+          setIsAuthed(false);
+          setError("Session expired. Please reconnect Drive.");
+          return;
+        }
+        tokenStore.clearTokens();
+        setIsAuthed(false);
+        setError("Session expired. Please reconnect Drive.");
+        return;
+      }
+      setError(message);
     } finally {
       setSyncing(false);
     }
@@ -152,11 +269,11 @@ export function LibraryClient() {
             Settings
           </Link>
           <Link href="/auth">
-            <PrimaryButton>Connect Drive</PrimaryButton>
+            <PrimaryButton>{isAuthed ? "Manage Drive" : "Connect Drive"}</PrimaryButton>
           </Link>
         </>
       }
-      status={`${books.length} books • ${loading ? "Syncing..." : "Idle"}`}
+      status={`${books.length} books • ${loading || syncing ? "Syncing..." : isAuthed ? "Connected" : "Offline"}`}
     >
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <PrimaryButton onClick={handleSync} disabled={loading}>
@@ -177,6 +294,18 @@ export function LibraryClient() {
         >
           {folderId ? "Change Folder" : "Pick Folder"}
         </button>
+        {folderId ? (
+          <button
+            type="button"
+            onClick={() => {
+              folderStore.clearFolderId();
+              setFolderId(null);
+            }}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:border-slate-300"
+          >
+            Clear Folder
+          </button>
+        ) : null}
         {folderId ? <span className="text-xs text-slate-500">Folder scoped</span> : null}
         {error ? <span className="text-xs text-rose-600">{error}</span> : null}
       </div>
@@ -198,7 +327,7 @@ export function LibraryClient() {
               title={book.title}
               author={book.author}
               status={statusFromBook(book)}
-              onClick={() => router.push(`/reader/${book.fileId}`)}
+              onClick={() => router.push(`/reader?fileId=${book.fileId}`)}
             />
           ))}
         </div>
