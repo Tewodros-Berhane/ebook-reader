@@ -1,5 +1,7 @@
-node_modules
-.env.local
-apps/**/.env.local
-google-services.json
-apps/mobile/android/app/google-services.json
+﻿# Prevent accidental credential commits
+credentials/
+
+# Flutter local artifacts
+helium_reader/.dart_tool/
+helium_reader/build/
+helium_reader/.idea/
