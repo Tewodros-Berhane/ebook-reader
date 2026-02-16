@@ -30,7 +30,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   Timer? _progressDebounce;
   Timer? _periodicCheckpoint;
-  String? _lastPersistedCfi;
+  String? _lastPersistedSignature;
 
   @override
   void initState() {
@@ -49,12 +49,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         epubCfi: ready.lastCfi.isEmpty ? null : ready.lastCfi,
       );
 
-      _lastPersistedCfi = ready.lastCfi.isEmpty ? null : ready.lastCfi;
+      _lastPersistedSignature = _signatureFrom(
+        cfi: ready.lastCfi,
+        chapter: ready.lastChapter > 0 ? ready.lastChapter : null,
+        percent: ready.lastPercent >= 0 ? ready.lastPercent : null,
+      );
+
       controller.currentValueListenable.addListener(_onPositionChanged);
       _periodicCheckpoint = Timer.periodic(
         const Duration(seconds: 2),
         (_) => _scheduleProgressSave(),
       );
+
+      _restoreFallbackPosition(controller, ready);
 
       if (!mounted) {
         controller.currentValueListenable.removeListener(_onPositionChanged);
@@ -79,19 +86,82 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
   }
 
+  void _restoreFallbackPosition(EpubController controller, BookRecord book) {
+    if (book.lastCfi.isNotEmpty || book.lastChapter <= 0) {
+      return;
+    }
+
+    Future<void> jumpToChapter() async {
+      final List<dynamic> toc = controller.tableOfContents();
+      final int targetIndex = book.lastChapter - 1;
+      if (targetIndex < 0 || targetIndex >= toc.length) {
+        return;
+      }
+      controller.jumpTo(index: toc[targetIndex].startIndex);
+    }
+
+    if (controller.isBookLoaded.value) {
+      unawaited(jumpToChapter());
+      return;
+    }
+
+    late VoidCallback listener;
+    listener = () {
+      if (!controller.isBookLoaded.value) {
+        return;
+      }
+      controller.isBookLoaded.removeListener(listener);
+      unawaited(jumpToChapter());
+    };
+    controller.isBookLoaded.addListener(listener);
+  }
+
+  _ReaderProgressSnapshot _captureSnapshot() {
+    final EpubController? controller = _epubController;
+    final dynamic current = controller?.currentValue;
+
+    final String cfi = controller?.generateEpubCfi()?.trim() ?? "";
+    final int? chapter = (current?.chapterNumber ?? 0) > 0
+        ? current!.chapterNumber
+        : null;
+
+    double? percent = current?.progress;
+    if (percent != null) {
+      if (!percent.isFinite) {
+        percent = null;
+      } else {
+        percent = percent.clamp(0, 100).toDouble();
+      }
+    }
+
+    return _ReaderProgressSnapshot(
+      cfi: cfi,
+      chapter: chapter,
+      percent: percent,
+    );
+  }
+
   void _onPositionChanged() {
     _scheduleProgressSave();
   }
 
   void _scheduleProgressSave() {
+    final _ReaderProgressSnapshot snapshot = _captureSnapshot();
     _progressDebounce?.cancel();
     _progressDebounce = Timer(const Duration(milliseconds: 450), () async {
-      await _persistProgress(sync: false);
+      await _persistProgress(
+        cfi: snapshot.cfi,
+        chapter: snapshot.chapter,
+        percent: snapshot.percent,
+        sync: false,
+      );
     });
   }
 
   Future<void> _persistProgress({
     String? cfi,
+    int? chapter,
+    double? percent,
     bool sync = false,
     bool forceWrite = false,
   }) async {
@@ -100,12 +170,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       return;
     }
 
-    final String? resolvedCfi = cfi ?? _epubController?.generateEpubCfi();
-    if (resolvedCfi == null || resolvedCfi.isEmpty) {
+    final _ReaderProgressSnapshot snapshot = _captureSnapshot();
+    final String resolvedCfi = (cfi ?? snapshot.cfi).trim();
+    final int? resolvedChapter = chapter ?? snapshot.chapter;
+    final double? resolvedPercent = percent ?? snapshot.percent;
+
+    final bool hasFallback =
+        (resolvedChapter != null && resolvedChapter > 0) &&
+        (resolvedPercent != null && resolvedPercent >= 0);
+
+    if (resolvedCfi.isEmpty && !hasFallback) {
       return;
     }
 
-    if (!forceWrite && resolvedCfi == _lastPersistedCfi) {
+    final String signature = _signatureFrom(
+      cfi: resolvedCfi,
+      chapter: resolvedChapter,
+      percent: resolvedPercent,
+    );
+
+    if (!forceWrite && signature == _lastPersistedSignature) {
       if (sync) {
         await ref
             .read(libraryControllerProvider.notifier)
@@ -116,9 +200,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
     await ref
         .read(libraryControllerProvider.notifier)
-        .saveProgress(fileId: book.fileId, cfi: resolvedCfi);
+        .saveProgress(
+          fileId: book.fileId,
+          cfi: resolvedCfi,
+          chapter: resolvedChapter,
+          percent: resolvedPercent,
+        );
 
-    _lastPersistedCfi = resolvedCfi;
+    _lastPersistedSignature = signature;
 
     if (sync) {
       await ref
@@ -127,9 +216,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
   }
 
-  Future<void> _syncBeforeExit([String? cfi]) async {
+  String _signatureFrom({required String cfi, int? chapter, double? percent}) {
+    final int chapterPart = chapter ?? -1;
+    final String percentPart = percent == null
+        ? "-1"
+        : percent.toStringAsFixed(2);
+    return "$cfi|$chapterPart|$percentPart";
+  }
+
+  Future<void> _syncBeforeExit([_ReaderProgressSnapshot? snapshot]) async {
     try {
-      await _persistProgress(cfi: cfi, sync: true, forceWrite: true);
+      await _persistProgress(
+        cfi: snapshot?.cfi,
+        chapter: snapshot?.chapter,
+        percent: snapshot?.percent,
+        sync: true,
+        forceWrite: true,
+      );
     } catch (_) {
       // Keep close path responsive even if sync fails.
     }
@@ -144,7 +247,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       _closing = true;
     });
 
-    await _syncBeforeExit(_epubController?.generateEpubCfi());
+    await _syncBeforeExit(_captureSnapshot());
 
     if (!mounted) {
       return;
@@ -158,14 +261,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      final String? cfi = _epubController?.generateEpubCfi();
-      unawaited(_syncBeforeExit(cfi));
+      unawaited(_syncBeforeExit(_captureSnapshot()));
     }
   }
 
   @override
   void dispose() {
-    final String? cfi = _epubController?.generateEpubCfi();
+    final _ReaderProgressSnapshot snapshot = _captureSnapshot();
 
     _progressDebounce?.cancel();
     _periodicCheckpoint?.cancel();
@@ -177,7 +279,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
 
     _epubController?.dispose();
-    unawaited(_syncBeforeExit(cfi));
+    unawaited(_syncBeforeExit(snapshot));
 
     super.dispose();
   }
@@ -291,4 +393,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       ),
     );
   }
+}
+
+class _ReaderProgressSnapshot {
+  const _ReaderProgressSnapshot({
+    required this.cfi,
+    required this.chapter,
+    required this.percent,
+  });
+
+  final String cfi;
+  final int? chapter;
+  final double? percent;
 }

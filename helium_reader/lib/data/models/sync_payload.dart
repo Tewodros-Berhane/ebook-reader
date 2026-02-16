@@ -1,17 +1,32 @@
 class SyncBookEntry {
-  const SyncBookEntry({required this.cfi, required this.ts});
+  const SyncBookEntry({
+    required this.cfi,
+    required this.ts,
+    this.chapter,
+    this.percent,
+  });
 
   final String cfi;
   final int ts;
+  final int? chapter;
+  final double? percent;
 
   Map<String, Object?> toJson() {
-    return <String, Object?>{"cfi": cfi, "ts": ts};
+    return <String, Object?>{
+      "cfi": cfi,
+      "ts": ts,
+      if (chapter != null) "chapter": chapter,
+      if (percent != null) "percent": percent,
+    };
   }
 
   factory SyncBookEntry.fromJson(Map<String, Object?> json) {
+    final num? rawPercent = json["percent"] as num?;
     return SyncBookEntry(
       cfi: (json["cfi"] as String?) ?? "",
       ts: (json["ts"] as num?)?.toInt() ?? 0,
+      chapter: (json["chapter"] as num?)?.toInt(),
+      percent: rawPercent?.toDouble(),
     );
   }
 }

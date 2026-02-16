@@ -90,8 +90,15 @@ class LibraryController extends StateNotifier<LibraryState> {
   Future<void> saveProgress({
     required String fileId,
     required String cfi,
+    int? chapter,
+    double? percent,
   }) async {
-    await _libraryService.updateProgress(fileId: fileId, cfi: cfi);
+    await _libraryService.updateProgress(
+      fileId: fileId,
+      cfi: cfi,
+      chapter: chapter,
+      percent: percent,
+    );
     await reloadLocal();
   }
 
@@ -100,17 +107,38 @@ class LibraryController extends StateNotifier<LibraryState> {
       return;
     }
 
-    state = state.copyWith(syncing: true, error: silent ? state.error : null);
+    final String? previousError = state.error;
+    await _libraryService.markDirtyPending();
+    await reloadLocal();
+
+    state = state.copyWith(syncing: true, error: silent ? previousError : null);
 
     try {
       await _syncService.syncProgress(deviceName: "Flutter-App");
       await reloadLocal();
       state = state.copyWith(syncing: false, error: null);
-    } catch (_) {
+    } catch (err) {
+      final String failureMessage = _formatSyncError(err);
+      await _libraryService.markDirtyFailed(failureMessage);
+      await reloadLocal();
       state = state.copyWith(
         syncing: false,
-        error: silent ? state.error : "Sync failed.",
+        error: silent ? previousError : "Sync failed.",
       );
     }
+  }
+
+  String _formatSyncError(Object err) {
+    final String raw = err.toString().trim();
+    if (raw.isEmpty) {
+      return "Unknown sync error";
+    }
+
+    final String compact = raw.replaceAll("\n", " ");
+    if (compact.length <= 180) {
+      return compact;
+    }
+
+    return "${compact.substring(0, 177)}...";
   }
 }

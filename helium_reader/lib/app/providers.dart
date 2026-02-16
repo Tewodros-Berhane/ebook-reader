@@ -5,6 +5,7 @@ import "../data/services/auth_service.dart";
 import "../data/services/drive_service.dart";
 import "../data/services/file_service.dart";
 import "../data/services/library_service.dart";
+import "../data/services/mysql_progress_service.dart";
 import "../data/services/sync_service.dart";
 import "../data/services/window_state_service.dart";
 import "../state/auth_controller.dart";
@@ -45,12 +46,22 @@ final Provider<LibraryService> libraryServiceProvider =
       );
     });
 
+final Provider<MySqlProgressService> mySqlProgressServiceProvider =
+    Provider<MySqlProgressService>((ref) {
+      return MySqlProgressService();
+    });
+
 final Provider<SyncService> syncServiceProvider = Provider<SyncService>((ref) {
   final LibraryService libraryService = ref.watch(libraryServiceProvider);
-  final DriveService driveService = ref.watch(driveServiceProvider);
+  final MySqlProgressService mySqlProgressService = ref.watch(
+    mySqlProgressServiceProvider,
+  );
+  final AuthService authService = ref.watch(authServiceProvider);
+
   return SyncService(
     libraryService: libraryService,
-    driveService: driveService,
+    mySqlProgressService: mySqlProgressService,
+    authService: authService,
   );
 });
 

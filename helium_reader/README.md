@@ -1,12 +1,13 @@
-﻿# Helium Reader (Flutter Pivot)
+# Helium Reader (Flutter Pivot)
 
-Cross-platform EPUB reader for Android + Desktop with Google Drive as storage and `sync.json` progress synchronization.
+Cross-platform EPUB reader for Android + Desktop with Google Drive for file storage and MySQL for cross-device progress sync.
 
 ## What changed
 
 - Legacy Next.js/Electron/Capacitor stack was removed.
-- Preserved credentials are now in `../credentials` at repo root.
-- New Flutter project lives in `helium_reader/`.
+- Preserved credentials are in `../credentials`.
+- Flutter app lives in `helium_reader/`.
+- Progress sync now uses MySQL (`book_progress` table), not `sync.json`.
 
 ## Credentials preserved
 
@@ -20,18 +21,20 @@ The following were moved to `../credentials`:
 - `apps__desktop__.env`
 - `apps__desktop__.env.local`
 - `apps__mobile__.env.local`
+- `connection-string.txt` (MySQL connection URI)
 
-`GoogleService-Info.plist` was not found in the previous repo snapshot.
+`GoogleService-Info.plist` may still need to be added manually if you build iOS.
 
 ## Required runtime config
 
-Pass OAuth client IDs via `--dart-define` when running/building:
+Pass OAuth and MySQL values via `--dart-define`:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_SERVER_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET` (required for desktop OAuth when using a Web OAuth client)
+- `GOOGLE_CLIENT_SECRET` (desktop OAuth with Web OAuth client)
+- `MYSQL_CONNECTION_URI` (required for progress sync)
 - Optional: `GOOGLE_REDIRECT_URI` (default: `http://localhost:4200/oauth2callback`)
-- Optional: `GOOGLE_DRIVE_FOLDER_ID` (to scope listing to one folder)
+- Optional: `GOOGLE_DRIVE_FOLDER_ID`
 
 Example:
 
@@ -40,12 +43,18 @@ flutter run -d windows \
   --dart-define=GOOGLE_CLIENT_ID=YOUR_CLIENT_ID \
   --dart-define=GOOGLE_SERVER_CLIENT_ID=YOUR_SERVER_CLIENT_ID \
   --dart-define=GOOGLE_CLIENT_SECRET=YOUR_CLIENT_SECRET \
-  --dart-define=GOOGLE_REDIRECT_URI=http://localhost:4200/oauth2callback
+  --dart-define=MYSQL_CONNECTION_URI=mysql://user:pass@host:4000/dbname
+```
+
+PowerShell helper from repo root (reads `credentials/connection-string.txt` automatically):
+
+```powershell
+./run_with_mysql.ps1 -Device windows -- --dart-define=GOOGLE_CLIENT_ID=... --dart-define=GOOGLE_SERVER_CLIENT_ID=... --dart-define=GOOGLE_CLIENT_SECRET=...
 ```
 
 ## Android / iOS credential placement
 
-A helper script is included in repo root:
+Use the helper script in repo root:
 
 ```powershell
 ./copy_credentials.ps1 -Android
@@ -57,39 +66,35 @@ Targets:
 - Android: `helium_reader/android/app/google-services.json`
 - iOS: `helium_reader/ios/Runner/GoogleService-Info.plist`
 
+## MySQL schema
+
+Primary table: `book_progress`
+
+- `user_email` + `drive_file_id` unique key
+- `cfi` for exact restore when available
+- `chapter` + `percent` fallback when CFI is unavailable
+- `updated_at_ms` for last-write-wins conflict resolution
+- `device_name` for audit/debug
+
+Schema file:
+
+- `helium_reader/database/mysql_schema.sql`
+
+The app auto-creates this table on first successful DB connection.
+
 ## Implemented architecture
 
 - Auth: `google_sign_in` + `flutter_secure_storage`
-  - Silent sign-in bootstrap (`attemptLightweightAuthentication`)
-  - Cached token/profile for offline fallback
-- Local DB: `sqflite` (`books` + `app_settings` tables)
-- Drive API: `googleapis` Drive v3 wrappers
-  - EPUB discovery by file extension
-  - File download to local library dir
-  - `appDataFolder/sync.json` read/write
+- Local DB: `sqflite` (`books`, `app_settings`)
+- Drive API: EPUB discovery + download
 - Sync engine:
-  - Last-write-wins using timestamps
-  - Pull newer cloud CFI to local
-  - Push dirty local progress to cloud
-- Reader: `epub_view`
-  - Loads local file path
-  - Saves CFI on chapter/page movement
-- UI:
-  - Dark layout matching provided references
-  - Drawer, library grid cards, settings sections
-  - Subtle sync progress indicator
-- Mobile background sync:
-  - `workmanager` periodic task for dirty progress upload
-- Desktop window memory:
-  - `window_manager` + `shared_preferences`
-
-## Current screens
-
-- Splash (silent auth handshake)
-- Login
-- Library (grid + drawer)
-- Reader
-- Settings
+  - local dirty progress -> MySQL upsert
+  - MySQL newer progress -> local apply
+  - conflict resolution by timestamp
+  - per-book sync states: `Synced`, `Pending`, `Failed`
+- Reader: `epub_view` (CFI + chapter/percent fallback tracking)
+- Mobile background sync: `workmanager`
+- Desktop window persistence: `window_manager`
 
 ## Run commands
 
@@ -104,8 +109,6 @@ flutter run -d windows
 
 ## Notes
 
-- Reading downloaded books works offline.
-- Drive refresh/sync requires a valid Google session token.
-- Desktop OAuth now stores refresh tokens and silently refreshes access tokens.
-- If refresh fails (revoked token), the app asks for sign-in again.
-
+- Downloaded books remain readable offline.
+- Sync requires network and valid MySQL connection config.
+- Google Drive is still used for book files and metadata; MySQL is only for reading progress.

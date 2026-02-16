@@ -79,8 +79,12 @@ class LibraryService {
             thumbnailUrl: driveBook.thumbnailUrl,
             localPath: local?.localPath ?? "",
             lastCfi: local?.lastCfi ?? "",
+            lastChapter: local?.lastChapter ?? -1,
+            lastPercent: local?.lastPercent ?? -1,
             timestamp: local?.timestamp ?? driveBook.modifiedTime,
             isDirty: local?.isDirty ?? false,
+            syncStatus: local?.syncStatus ?? SyncStatus.synced,
+            syncError: local?.syncError ?? "",
             downloadStatus: local?.downloadStatus ?? DownloadStatus.pending,
             modifiedTime: driveBook.modifiedTime,
           );
@@ -121,10 +125,21 @@ class LibraryService {
     return refreshed;
   }
 
-  Future<void> updateProgress({required String fileId, required String cfi}) {
-    return _database.updateProgress(
+  Future<void> updateProgress({
+    required String fileId,
+    required String cfi,
+    int? chapter,
+    double? percent,
+  }) async {
+    final BookRecord? current = await _database.getBook(fileId);
+    final int resolvedChapter = chapter ?? current?.lastChapter ?? -1;
+    final double resolvedPercent = percent ?? current?.lastPercent ?? -1;
+
+    await _database.updateProgress(
       fileId: fileId,
       cfi: cfi,
+      lastChapter: resolvedChapter,
+      lastPercent: resolvedPercent,
       timestamp: DateTime.now().millisecondsSinceEpoch,
       isDirty: true,
     );
@@ -134,14 +149,23 @@ class LibraryService {
     required String fileId,
     required String cfi,
     required int timestamp,
+    int? chapter,
+    double? percent,
   }) {
     return _database.updateProgress(
       fileId: fileId,
       cfi: cfi,
+      lastChapter: chapter ?? -1,
+      lastPercent: percent ?? -1,
       timestamp: timestamp,
       isDirty: false,
     );
   }
 
   Future<void> markClean(List<String> fileIds) => _database.markClean(fileIds);
+
+  Future<void> markDirtyPending() => _database.markDirtyPending();
+
+  Future<void> markDirtyFailed(String message) =>
+      _database.markDirtyFailed(message);
 }

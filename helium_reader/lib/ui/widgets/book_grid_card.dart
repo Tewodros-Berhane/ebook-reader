@@ -18,19 +18,7 @@ class BookGridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color statusColor;
-    final String statusText;
-
-    if (book.isDirty) {
-      statusColor = AppTheme.accent;
-      statusText = "Sync pending";
-    } else if (book.isDownloaded) {
-      statusColor = const Color(0xFF7CD992);
-      statusText = "Downloaded";
-    } else {
-      statusColor = const Color(0xFF9E9E9E);
-      statusText = "Cloud";
-    }
+    final _SyncBadge badge = _syncBadgeFor(book.syncStatus);
 
     return Card(
       margin: EdgeInsets.zero,
@@ -74,21 +62,40 @@ class BookGridCard extends StatelessWidget {
                   Row(
                     children: <Widget>[
                       Container(
-                        width: 7,
-                        height: 7,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
-                          color: statusColor,
-                          borderRadius: BorderRadius.circular(99),
+                          color: badge.background,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: badge.border),
+                        ),
+                        child: Text(
+                          badge.label,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        statusText,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppTheme.muted,
+                      if (book.syncStatus == SyncStatus.failed &&
+                          book.syncError.trim().isNotEmpty)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Text(
+                              "Sync error",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: AppTheme.accent,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ],
@@ -98,6 +105,29 @@ class BookGridCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  _SyncBadge _syncBadgeFor(SyncStatus status) {
+    switch (status) {
+      case SyncStatus.pending:
+        return const _SyncBadge(
+          label: "Pending",
+          border: AppTheme.accent,
+          background: Color(0x2BE57D8B),
+        );
+      case SyncStatus.failed:
+        return const _SyncBadge(
+          label: "Failed",
+          border: Color(0xFFE25C5C),
+          background: Color(0x2BE25C5C),
+        );
+      case SyncStatus.synced:
+        return const _SyncBadge(
+          label: "Synced",
+          border: Color(0xFF7CD992),
+          background: Color(0x2B7CD992),
+        );
+    }
   }
 }
 
@@ -182,4 +212,16 @@ class _CoverImage extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SyncBadge {
+  const _SyncBadge({
+    required this.label,
+    required this.border,
+    required this.background,
+  });
+
+  final String label;
+  final Color border;
+  final Color background;
 }

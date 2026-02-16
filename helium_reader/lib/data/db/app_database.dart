@@ -30,7 +30,7 @@ class AppDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE books (
@@ -40,8 +40,12 @@ class AppDatabase {
             thumbnailUrl TEXT NOT NULL,
             localPath TEXT NOT NULL,
             lastCfi TEXT NOT NULL,
+            lastChapter INTEGER NOT NULL DEFAULT -1,
+            lastPercent REAL NOT NULL DEFAULT -1,
             timestamp INTEGER NOT NULL,
             isDirty INTEGER NOT NULL,
+            syncStatus TEXT NOT NULL DEFAULT 'synced',
+            syncError TEXT NOT NULL DEFAULT '',
             downloadStatus TEXT NOT NULL,
             modifiedTime INTEGER NOT NULL
           )
@@ -53,6 +57,30 @@ class AppDatabase {
             value TEXT NOT NULL
           )
         ''');
+      },
+      onUpgrade: (Database db, int oldVersion, int newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            "ALTER TABLE books ADD COLUMN lastChapter INTEGER NOT NULL DEFAULT -1",
+          );
+          await db.execute(
+            "ALTER TABLE books ADD COLUMN lastPercent REAL NOT NULL DEFAULT -1",
+          );
+          await db.execute(
+            "ALTER TABLE books ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'synced'",
+          );
+          await db.execute(
+            "ALTER TABLE books ADD COLUMN syncError TEXT NOT NULL DEFAULT ''",
+          );
+          await db.execute('''
+            UPDATE books
+            SET syncStatus = CASE
+              WHEN isDirty = 1 THEN 'pending'
+              ELSE 'synced'
+            END,
+            syncError = ''
+          ''');
+        }
       },
     );
   }
@@ -109,6 +137,8 @@ class AppDatabase {
   Future<void> updateProgress({
     required String fileId,
     required String cfi,
+    required int lastChapter,
+    required double lastPercent,
     required int timestamp,
     required bool isDirty,
   }) async {
@@ -116,8 +146,14 @@ class AppDatabase {
       "books",
       <String, Object?>{
         "lastCfi": cfi,
+        "lastChapter": lastChapter,
+        "lastPercent": lastPercent,
         "timestamp": timestamp,
         "isDirty": isDirty ? 1 : 0,
+        "syncStatus": isDirty
+            ? SyncStatus.pending.name
+            : SyncStatus.synced.name,
+        "syncError": "",
       },
       where: "fileId = ?",
       whereArgs: <Object?>[fileId],
@@ -146,12 +182,30 @@ class AppDatabase {
     for (final String fileId in fileIds) {
       batch.update(
         "books",
-        <String, Object?>{"isDirty": 0},
+        <String, Object?>{
+          "isDirty": 0,
+          "syncStatus": SyncStatus.synced.name,
+          "syncError": "",
+        },
         where: "fileId = ?",
         whereArgs: <Object?>[fileId],
       );
     }
     await batch.commit(noResult: true);
+  }
+
+  Future<void> markDirtyPending() async {
+    await _database.update("books", <String, Object?>{
+      "syncStatus": SyncStatus.pending.name,
+      "syncError": "",
+    }, where: "isDirty = 1");
+  }
+
+  Future<void> markDirtyFailed(String message) async {
+    await _database.update("books", <String, Object?>{
+      "syncStatus": SyncStatus.failed.name,
+      "syncError": message,
+    }, where: "isDirty = 1");
   }
 
   Future<List<BookRecord>> listDirtyBooks() async {
