@@ -96,6 +96,29 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     }
   }
 
+  Future<void> _waitForSyncIdle({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final DateTime deadline = DateTime.now().add(timeout);
+    while (ref.read(libraryControllerProvider).syncing &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 140));
+    }
+  }
+
+  Future<void> _syncBeforeOpenIfSignedIn() async {
+    final AuthState auth = ref.read(authControllerProvider);
+    if (auth.status != AuthStatus.signedIn) {
+      return;
+    }
+
+    await _waitForSyncIdle();
+    await ref
+        .read(libraryControllerProvider.notifier)
+        .syncProgress(silent: true);
+    await _waitForSyncIdle();
+  }
+
   Future<void> _pickFolder() async {
     final AuthState authState = ref.read(authControllerProvider);
     if (authState.status != AuthStatus.signedIn) {
@@ -204,6 +227,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     });
 
     try {
+      await _syncBeforeOpenIfSignedIn();
+
       final BookRecord ready = await ref
           .read(libraryControllerProvider.notifier)
           .prepareForReading(book.fileId);

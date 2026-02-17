@@ -1,3 +1,5 @@
+import "reading_locator.dart";
+
 enum DownloadStatus { pending, downloading, ready }
 
 enum SyncStatus { synced, pending, failed }
@@ -12,6 +14,7 @@ class BookRecord {
     required this.lastCfi,
     required this.lastChapter,
     required this.lastPercent,
+    required this.lastLocator,
     required this.timestamp,
     required this.isDirty,
     required this.syncStatus,
@@ -28,6 +31,7 @@ class BookRecord {
   final String lastCfi;
   final int lastChapter;
   final double lastPercent;
+  final String lastLocator;
   final int timestamp;
   final bool isDirty;
   final SyncStatus syncStatus;
@@ -40,6 +44,10 @@ class BookRecord {
 
   bool get hasFallbackProgress => lastChapter > 0 && lastPercent >= 0;
 
+  ReadingLocator? get locator => ReadingLocator.tryParse(lastLocator);
+
+  bool get hasStructuredLocator => locator != null;
+
   BookRecord copyWith({
     String? fileId,
     String? title,
@@ -49,6 +57,7 @@ class BookRecord {
     String? lastCfi,
     int? lastChapter,
     double? lastPercent,
+    String? lastLocator,
     int? timestamp,
     bool? isDirty,
     SyncStatus? syncStatus,
@@ -65,6 +74,7 @@ class BookRecord {
       lastCfi: lastCfi ?? this.lastCfi,
       lastChapter: lastChapter ?? this.lastChapter,
       lastPercent: lastPercent ?? this.lastPercent,
+      lastLocator: lastLocator ?? this.lastLocator,
       timestamp: timestamp ?? this.timestamp,
       isDirty: isDirty ?? this.isDirty,
       syncStatus: syncStatus ?? this.syncStatus,
@@ -84,6 +94,7 @@ class BookRecord {
       "lastCfi": lastCfi,
       "lastChapter": lastChapter,
       "lastPercent": lastPercent,
+      "locatorJson": lastLocator,
       "timestamp": timestamp,
       "isDirty": isDirty ? 1 : 0,
       "syncStatus": syncStatus.name,
@@ -112,6 +123,7 @@ class BookRecord {
       lastCfi: (map["lastCfi"] as String?) ?? "",
       lastChapter: (map["lastChapter"] as int?) ?? -1,
       lastPercent: rawPercent.toDouble(),
+      lastLocator: (map["locatorJson"] as String?) ?? "",
       timestamp: (map["timestamp"] as int?) ?? 0,
       isDirty: ((map["isDirty"] as int?) ?? 0) == 1,
       syncStatus: SyncStatus.values.firstWhere(

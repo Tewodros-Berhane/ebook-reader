@@ -30,7 +30,7 @@ class AppDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 2,
+      version: 3,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE books (
@@ -42,6 +42,7 @@ class AppDatabase {
             lastCfi TEXT NOT NULL,
             lastChapter INTEGER NOT NULL DEFAULT -1,
             lastPercent REAL NOT NULL DEFAULT -1,
+            locatorJson TEXT NOT NULL DEFAULT '',
             timestamp INTEGER NOT NULL,
             isDirty INTEGER NOT NULL,
             syncStatus TEXT NOT NULL DEFAULT 'synced',
@@ -80,6 +81,12 @@ class AppDatabase {
             END,
             syncError = ''
           ''');
+        }
+
+        if (oldVersion < 3) {
+          await db.execute(
+            "ALTER TABLE books ADD COLUMN locatorJson TEXT NOT NULL DEFAULT ''",
+          );
         }
       },
     );
@@ -139,6 +146,7 @@ class AppDatabase {
     required String cfi,
     required int lastChapter,
     required double lastPercent,
+    required String locatorJson,
     required int timestamp,
     required bool isDirty,
   }) async {
@@ -148,6 +156,7 @@ class AppDatabase {
         "lastCfi": cfi,
         "lastChapter": lastChapter,
         "lastPercent": lastPercent,
+        "locatorJson": locatorJson,
         "timestamp": timestamp,
         "isDirty": isDirty ? 1 : 0,
         "syncStatus": isDirty

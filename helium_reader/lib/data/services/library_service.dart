@@ -81,6 +81,7 @@ class LibraryService {
             lastCfi: local?.lastCfi ?? "",
             lastChapter: local?.lastChapter ?? -1,
             lastPercent: local?.lastPercent ?? -1,
+            lastLocator: local?.lastLocator ?? "",
             timestamp: local?.timestamp ?? driveBook.modifiedTime,
             isDirty: local?.isDirty ?? false,
             syncStatus: local?.syncStatus ?? SyncStatus.synced,
@@ -128,18 +129,23 @@ class LibraryService {
   Future<void> updateProgress({
     required String fileId,
     required String cfi,
+    String? locatorJson,
     int? chapter,
     double? percent,
   }) async {
     final BookRecord? current = await _database.getBook(fileId);
     final int resolvedChapter = chapter ?? current?.lastChapter ?? -1;
     final double resolvedPercent = percent ?? current?.lastPercent ?? -1;
+    final String resolvedLocator = (locatorJson?.trim().isNotEmpty ?? false)
+        ? locatorJson!.trim()
+        : (current?.lastLocator ?? "");
 
     await _database.updateProgress(
       fileId: fileId,
       cfi: cfi,
       lastChapter: resolvedChapter,
       lastPercent: resolvedPercent,
+      locatorJson: resolvedLocator,
       timestamp: DateTime.now().millisecondsSinceEpoch,
       isDirty: true,
     );
@@ -149,6 +155,7 @@ class LibraryService {
     required String fileId,
     required String cfi,
     required int timestamp,
+    String? locatorJson,
     int? chapter,
     double? percent,
   }) {
@@ -157,6 +164,7 @@ class LibraryService {
       cfi: cfi,
       lastChapter: chapter ?? -1,
       lastPercent: percent ?? -1,
+      locatorJson: locatorJson?.trim() ?? "",
       timestamp: timestamp,
       isDirty: false,
     );

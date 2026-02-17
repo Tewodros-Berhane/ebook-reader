@@ -4,12 +4,14 @@ class SyncBookEntry {
     required this.ts,
     this.chapter,
     this.percent,
+    this.locator,
   });
 
   final String cfi;
   final int ts;
   final int? chapter;
   final double? percent;
+  final Map<String, Object?>? locator;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
@@ -17,16 +19,33 @@ class SyncBookEntry {
       "ts": ts,
       if (chapter != null) "chapter": chapter,
       if (percent != null) "percent": percent,
+      if (locator != null && locator!.isNotEmpty) "locator": locator,
     };
   }
 
   factory SyncBookEntry.fromJson(Map<String, Object?> json) {
     final num? rawPercent = json["percent"] as num?;
+    final Object? rawLocator = json["locator"];
+
+    Map<String, Object?>? locator;
+    if (rawLocator is Map) {
+      final Map<String, Object?> casted = <String, Object?>{};
+      rawLocator.forEach((key, value) {
+        if (key is String) {
+          casted[key] = value;
+        }
+      });
+      if (casted.isNotEmpty) {
+        locator = casted;
+      }
+    }
+
     return SyncBookEntry(
       cfi: (json["cfi"] as String?) ?? "",
       ts: (json["ts"] as num?)?.toInt() ?? 0,
       chapter: (json["chapter"] as num?)?.toInt(),
       percent: rawPercent?.toDouble(),
+      locator: locator,
     );
   }
 }

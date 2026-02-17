@@ -1,3 +1,4 @@
+import "package:flutter/foundation.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../data/models/book_record.dart";
@@ -90,12 +91,14 @@ class LibraryController extends StateNotifier<LibraryState> {
   Future<void> saveProgress({
     required String fileId,
     required String cfi,
+    String? locatorJson,
     int? chapter,
     double? percent,
   }) async {
     await _libraryService.updateProgress(
       fileId: fileId,
       cfi: cfi,
+      locatorJson: locatorJson,
       chapter: chapter,
       percent: percent,
     );
@@ -114,7 +117,7 @@ class LibraryController extends StateNotifier<LibraryState> {
     state = state.copyWith(syncing: true, error: silent ? previousError : null);
 
     try {
-      await _syncService.syncProgress(deviceName: "Flutter-App");
+      await _syncService.syncProgress(deviceName: _deviceName());
       await reloadLocal();
       state = state.copyWith(syncing: false, error: null);
     } catch (err) {
@@ -123,7 +126,7 @@ class LibraryController extends StateNotifier<LibraryState> {
       await reloadLocal();
       state = state.copyWith(
         syncing: false,
-        error: silent ? previousError : "Sync failed.",
+        error: silent ? previousError : "Sync failed: $failureMessage",
       );
     }
   }
@@ -140,5 +143,26 @@ class LibraryController extends StateNotifier<LibraryState> {
     }
 
     return "${compact.substring(0, 177)}...";
+  }
+
+  String _deviceName() {
+    if (kIsWeb) {
+      return "Flutter-Web";
+    }
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.windows:
+        return "Flutter-Windows";
+      case TargetPlatform.android:
+        return "Flutter-Android";
+      case TargetPlatform.iOS:
+        return "Flutter-iOS";
+      case TargetPlatform.macOS:
+        return "Flutter-macOS";
+      case TargetPlatform.linux:
+        return "Flutter-Linux";
+      case TargetPlatform.fuchsia:
+        return "Flutter-Fuchsia";
+    }
   }
 }

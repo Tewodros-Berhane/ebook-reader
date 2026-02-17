@@ -12,7 +12,6 @@ import "data/services/auth_service.dart";
 import "data/services/drive_service.dart";
 import "data/services/file_service.dart";
 import "data/services/library_service.dart";
-import "data/services/mysql_progress_service.dart";
 import "data/services/sync_service.dart";
 import "data/services/window_state_service.dart";
 
@@ -35,8 +34,7 @@ void backgroundSyncDispatcher() {
       );
       final SyncService syncService = SyncService(
         libraryService: libraryService,
-        mySqlProgressService: MySqlProgressService(),
-        authService: authService,
+        driveService: driveService,
       );
 
       return syncService.backgroundSyncAttempt(deviceName: "Mobile-Background");

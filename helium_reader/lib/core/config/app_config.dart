@@ -27,9 +27,4 @@ class AppConfig {
     "GOOGLE_DRIVE_FOLDER_ID",
     defaultValue: "",
   );
-
-  static const String mysqlConnectionUri = String.fromEnvironment(
-    "MYSQL_CONNECTION_URI",
-    defaultValue: "",
-  );
 }

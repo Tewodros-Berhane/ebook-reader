@@ -1,26 +1,24 @@
 import "dart:async";
 import "dart:convert";
+import "dart:developer" as dev;
 
 import "../models/book_record.dart";
+import "../models/reading_locator.dart";
 import "../models/sync_payload.dart";
-import "auth_service.dart";
+import "drive_service.dart";
 import "library_service.dart";
-import "mysql_progress_service.dart";
 
 class SyncService {
   SyncService({
     required LibraryService libraryService,
-    required MySqlProgressService mySqlProgressService,
-    required AuthService authService,
+    required DriveService driveService,
   }) : _libraryService = libraryService,
-       _mySqlProgressService = mySqlProgressService,
-       _authService = authService;
+       _driveService = driveService;
 
   static const int _maxAttempts = 3;
 
   final LibraryService _libraryService;
-  final MySqlProgressService _mySqlProgressService;
-  final AuthService _authService;
+  final DriveService _driveService;
 
   Future<void>? _inFlight;
 
@@ -47,8 +45,14 @@ class SyncService {
       try {
         await _syncOnce(deviceName: deviceName);
         return;
-      } catch (err) {
+      } catch (err, stack) {
         lastError = err;
+        _log(
+          "Sync attempt $attempt/$_maxAttempts failed: $err",
+          error: err,
+          stackTrace: stack,
+        );
+
         if (attempt >= _maxAttempts) {
           rethrow;
         }
@@ -60,17 +64,25 @@ class SyncService {
   }
 
   Future<void> _syncOnce({required String deviceName}) async {
-    final String userEmail = await _resolveUserEmail();
-    final Map<String, SyncBookEntry> cloudBooks = await _mySqlProgressService
-        .fetchUserProgress(userEmail: userEmail);
+    final SyncFileDocument? cloudDocument = await _driveService
+        .getSyncDocument();
+    final SyncPayload cloudPayload =
+        cloudDocument?.payload ?? SyncPayload.empty();
+    final Map<String, SyncBookEntry> cloudBooks =
+        Map<String, SyncBookEntry>.from(cloudPayload.books);
 
     final Map<String, SyncBookEntry> toUpload = <String, SyncBookEntry>{};
     final List<BookRecord> localBooks = await _libraryService.localBooks();
     final List<String> cleaned = <String>[];
 
+    int pulled = 0;
+    int guarded = 0;
+
     for (final BookRecord local in localBooks) {
       final bool hasProgress =
-          local.lastCfi.isNotEmpty || local.hasFallbackProgress;
+          local.lastCfi.isNotEmpty ||
+          local.hasFallbackProgress ||
+          local.hasStructuredLocator;
       if (!hasProgress) {
         continue;
       }
@@ -79,73 +91,142 @@ class SyncService {
 
       if (local.isDirty) {
         if (cloudEntry == null || local.timestamp >= cloudEntry.ts) {
-          toUpload[local.fileId] = SyncBookEntry(
-            cfi: local.lastCfi,
-            ts: local.timestamp,
-            chapter: local.hasFallbackProgress ? local.lastChapter : null,
-            percent: local.hasFallbackProgress ? local.lastPercent : null,
-          );
+          if (cloudEntry != null && _isLikelyRegression(local, cloudEntry)) {
+            guarded += 1;
+            pulled += 1;
+            await _applyCloudEntry(local.fileId, cloudEntry);
+            continue;
+          }
+
+          toUpload[local.fileId] = _entryFromLocal(local);
           cleaned.add(local.fileId);
         } else {
-          await _libraryService.applyCloudProgress(
-            fileId: local.fileId,
-            cfi: cloudEntry.cfi,
-            timestamp: cloudEntry.ts,
-            chapter: cloudEntry.chapter,
-            percent: cloudEntry.percent,
-          );
+          pulled += 1;
+          await _applyCloudEntry(local.fileId, cloudEntry);
         }
         continue;
       }
 
       if (cloudEntry != null && cloudEntry.ts > local.timestamp) {
-        await _libraryService.applyCloudProgress(
-          fileId: local.fileId,
-          cfi: cloudEntry.cfi,
-          timestamp: cloudEntry.ts,
-          chapter: cloudEntry.chapter,
-          percent: cloudEntry.percent,
-        );
+        pulled += 1;
+        await _applyCloudEntry(local.fileId, cloudEntry);
         continue;
       }
 
       if (cloudEntry == null && local.timestamp > 0) {
-        toUpload[local.fileId] = SyncBookEntry(
-          cfi: local.lastCfi,
-          ts: local.timestamp,
-          chapter: local.hasFallbackProgress ? local.lastChapter : null,
-          percent: local.hasFallbackProgress ? local.lastPercent : null,
-        );
+        toUpload[local.fileId] = _entryFromLocal(local);
       }
     }
 
     if (toUpload.isNotEmpty) {
-      await _mySqlProgressService.upsertUserProgress(
-        userEmail: userEmail,
-        entries: toUpload,
-        deviceName: deviceName,
+      final Map<String, SyncBookEntry> mergedBooks =
+          Map<String, SyncBookEntry>.from(cloudBooks)..addAll(toUpload);
+      final SyncPayload nextPayload = cloudPayload.copyWith(
+        lastSynced: DateTime.now().toUtc().toIso8601String(),
+        lastDevice: deviceName,
+        books: mergedBooks,
+      );
+
+      await _driveService.upsertSyncDocument(
+        payload: nextPayload,
+        existingFileId: cloudDocument?.fileId,
       );
     }
 
     if (cleaned.isNotEmpty) {
       await _libraryService.markClean(cleaned);
     }
+
+    _log(
+      "Sync complete: local=${localBooks.length}, cloud=${cloudBooks.length}, pulled=$pulled, upload=${toUpload.length}, cleaned=${cleaned.length}, guarded=$guarded",
+    );
   }
 
-  Future<String> _resolveUserEmail() async {
-    final String token =
-        (await _authService.accessToken(promptIfNecessary: false) ?? "").trim();
-    if (token.isEmpty) {
-      throw StateError("Sign in is required before syncing progress.");
+  SyncBookEntry _entryFromLocal(BookRecord local) {
+    return SyncBookEntry(
+      cfi: local.lastCfi,
+      ts: local.timestamp,
+      chapter: local.hasFallbackProgress ? local.lastChapter : null,
+      percent: local.hasFallbackProgress ? local.lastPercent : null,
+      locator: local.locator?.toJson(),
+    );
+  }
+
+  Future<void> _applyCloudEntry(String fileId, SyncBookEntry cloudEntry) {
+    return _libraryService.applyCloudProgress(
+      fileId: fileId,
+      cfi: cloudEntry.cfi,
+      timestamp: cloudEntry.ts,
+      locatorJson: _encodeLocator(cloudEntry.locator),
+      chapter: cloudEntry.chapter,
+      percent: cloudEntry.percent,
+    );
+  }
+
+  bool _isLikelyRegression(BookRecord local, SyncBookEntry cloudEntry) {
+    final double? localScore = _progressScoreForLocal(local);
+    final double? cloudScore = _progressScoreForCloud(cloudEntry);
+    if (localScore == null || cloudScore == null) {
+      return false;
     }
 
-    final String email =
-        (await _authService.cachedProfile())?.email.trim() ?? "";
-    if (email.isEmpty) {
-      throw StateError("Cannot sync without a signed-in Google account email.");
+    // Prevent stale local rewinds from overwriting clearly newer cloud position.
+    return localScore + 0.20 < cloudScore;
+  }
+
+  double? _progressScoreForLocal(BookRecord local) {
+    final ReadingLocator? locator = local.locator;
+    final double? total = locator?.totalProgression;
+    if (total != null) {
+      return total.clamp(0, 1).toDouble() * 10000;
     }
 
-    return email.toLowerCase();
+    if (local.lastChapter > 0) {
+      final double percent = local.lastPercent.isFinite
+          ? local.lastPercent.clamp(0, 100).toDouble()
+          : 0;
+      return local.lastChapter.toDouble() + (percent / 100);
+    }
+
+    final double? progression = locator?.progression;
+    if (progression != null) {
+      return progression.clamp(0, 1).toDouble();
+    }
+
+    return null;
+  }
+
+  double? _progressScoreForCloud(SyncBookEntry cloudEntry) {
+    final ReadingLocator? locator = _locatorFromMap(cloudEntry.locator);
+    final double? total = locator?.totalProgression;
+    if (total != null) {
+      return total.clamp(0, 1).toDouble() * 10000;
+    }
+
+    final int chapter = cloudEntry.chapter ?? -1;
+    if (chapter > 0) {
+      final double percent = (cloudEntry.percent ?? 0).clamp(0, 100).toDouble();
+      return chapter.toDouble() + (percent / 100);
+    }
+
+    final double? progression = locator?.progression;
+    if (progression != null) {
+      return progression.clamp(0, 1).toDouble();
+    }
+
+    return null;
+  }
+
+  ReadingLocator? _locatorFromMap(Map<String, Object?>? raw) {
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+
+    try {
+      return ReadingLocator.fromJson(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool> backgroundSyncAttempt({
@@ -154,7 +235,8 @@ class SyncService {
     try {
       await syncProgress(deviceName: deviceName);
       return true;
-    } catch (_) {
+    } catch (err, stack) {
+      _log("Background sync failed: $err", error: err, stackTrace: stack);
       return false;
     }
   }
@@ -165,5 +247,20 @@ class SyncService {
       "books": books.map((b) => b.toMap()).toList(growable: false),
     };
     return jsonEncode(payload);
+  }
+
+  String? _encodeLocator(Map<String, Object?>? locator) {
+    if (locator == null || locator.isEmpty) {
+      return null;
+    }
+    return jsonEncode(locator);
+  }
+
+  void _log(String message, {Object? error, StackTrace? stackTrace}) {
+    final String line = "[helium.sync] $message";
+    // print() ensures visibility in terminal when running flutter run.
+    // ignore: avoid_print
+    print(line);
+    dev.log(line, name: "helium.sync", error: error, stackTrace: stackTrace);
   }
 }
