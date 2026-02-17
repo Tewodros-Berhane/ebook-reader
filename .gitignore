@@ -1,4 +1,4 @@
-﻿# Prevent accidental credential commits
+# Prevent accidental credential commits
 credentials/
 
 # Flutter local artifacts
