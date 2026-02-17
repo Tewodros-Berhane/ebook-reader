@@ -32,9 +32,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   bool _closing = false;
 
   Timer? _progressDebounce;
+  Timer? _fontSizeDebounce;
   Timer? _periodicCheckpoint;
   String? _lastPersistedSignature;
   DateTime _openedAt = DateTime.now();
+  double _fontSize = 30;
 
   @override
   void initState() {
@@ -82,6 +84,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
       setState(() {
         _book = ready;
+        _fontSize = ready.readerFontSize.clamp(16, 42).toDouble();
         _epubController = controller;
         _loading = false;
       });
@@ -405,6 +408,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     });
   }
 
+  void _scheduleReaderFontSizeSave() {
+    final BookRecord? book = _book;
+    if (book == null) {
+      return;
+    }
+
+    _fontSizeDebounce?.cancel();
+    _fontSizeDebounce = Timer(const Duration(milliseconds: 260), () async {
+      await ref
+          .read(libraryControllerProvider.notifier)
+          .saveReaderFontSize(fileId: book.fileId, fontSize: _fontSize);
+    });
+  }
+
+  void _persistReaderFontSizeNow() {
+    final BookRecord? book = _book;
+    if (book == null) {
+      return;
+    }
+
+    _fontSizeDebounce?.cancel();
+    unawaited(
+      ref
+          .read(libraryControllerProvider.notifier)
+          .saveReaderFontSize(fileId: book.fileId, fontSize: _fontSize),
+    );
+  }
+
   Future<void> _persistProgress({
     String? cfi,
     String? locatorJson,
@@ -506,6 +537,76 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   bool get _useKeyboardTocShortcut =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
+  void _openFontSizeSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF17181D),
+      builder: (context) {
+        double tempSize = _fontSize;
+
+        return StatefulBuilder(
+          builder: (context, sheetSetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      "Font size",
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: <Widget>[
+                        const Text(
+                          "A",
+                          style: TextStyle(color: AppTheme.muted),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: tempSize,
+                            min: 16,
+                            max: 42,
+                            divisions: 26,
+                            label: tempSize.toStringAsFixed(0),
+                            onChanged: (value) {
+                              tempSize = value;
+                              sheetSetState(() {});
+                              if (mounted) {
+                                setState(() {
+                                  _fontSize = value;
+                                });
+                                _scheduleReaderFontSizeSave();
+                              }
+                            },
+                          ),
+                        ),
+                        const Text(
+                          "A",
+                          style: TextStyle(fontSize: 20, color: AppTheme.muted),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          tempSize.toStringAsFixed(0),
+                          style: const TextStyle(color: AppTheme.muted),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _openTocDrawer() {
     if (_epubController == null) {
       return;
@@ -567,6 +668,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       _closing = true;
     });
 
+    _persistReaderFontSizeNow();
     await _syncBeforeExit(_captureSnapshot());
 
     if (!mounted) {
@@ -589,7 +691,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   void dispose() {
     final _ReaderProgressSnapshot snapshot = _captureSnapshot();
 
+    _persistReaderFontSizeNow();
     _progressDebounce?.cancel();
+    _fontSizeDebounce?.cancel();
     _periodicCheckpoint?.cancel();
     WidgetsBinding.instance.removeObserver(this);
 
@@ -610,6 +714,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
     final Widget scaffold = Scaffold(
       key: _scaffoldKey,
+      backgroundColor: Colors.black,
       appBar: AppBar(
         automaticallyImplyLeading: false,
         leading: IconButton(
@@ -635,6 +740,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
               onPressed: _openTocDrawer,
               icon: const Icon(Icons.format_list_bulleted_rounded),
             ),
+          IconButton(
+            tooltip: "Adjust font size",
+            onPressed: _openFontSizeSheet,
+            icon: const Icon(Icons.format_size_rounded),
+          ),
           IconButton(
             tooltip: "Sync now",
             onPressed: () =>
@@ -672,43 +782,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       body: Column(
         children: <Widget>[
           Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : (_error != null)
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        "Could not open EPUB\n$_error",
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppTheme.accent),
+            child: Container(
+              color: Colors.black,
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : (_error != null)
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          "Could not open EPUB\n$_error",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: AppTheme.accent),
+                        ),
                       ),
-                    ),
-                  )
-                : EpubView(
-                    controller: controller!,
-                    onChapterChanged: (_) => _scheduleProgressSave(),
-                    builders: EpubViewBuilders<DefaultBuilderOptions>(
-                      options: const DefaultBuilderOptions(
-                        textStyle: TextStyle(
-                          fontSize: 30,
-                          color: Colors.white,
-                          height: 1.8,
-                          fontFamily: "Georgia",
+                    )
+                  : EpubView(
+                      controller: controller!,
+                      onChapterChanged: (_) => _scheduleProgressSave(),
+                      builders: EpubViewBuilders<DefaultBuilderOptions>(
+                        options: DefaultBuilderOptions(
+                          textStyle: TextStyle(
+                            fontSize: _fontSize,
+                            color: Colors.white,
+                            height: 1.8,
+                            fontFamily: "Georgia",
+                          ),
                         ),
                       ),
                     ),
-                  ),
-          ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: AppTheme.divider)),
-            ),
-            child: const Text(
-              "Reading progress is saved locally and synced to Drive.",
-              style: TextStyle(fontSize: 12, color: AppTheme.muted),
             ),
           ),
         ],

@@ -105,6 +105,16 @@ class LibraryController extends StateNotifier<LibraryState> {
     await reloadLocal();
   }
 
+  Future<void> saveReaderFontSize({
+    required String fileId,
+    required double fontSize,
+  }) {
+    return _libraryService.updateReaderFontSize(
+      fileId: fileId,
+      fontSize: fontSize,
+    );
+  }
+
   Future<void> syncProgress({bool silent = false}) async {
     if (state.syncing) {
       return;

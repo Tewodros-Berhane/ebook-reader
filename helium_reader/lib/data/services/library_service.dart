@@ -88,6 +88,7 @@ class LibraryService {
             syncError: local?.syncError ?? "",
             downloadStatus: local?.downloadStatus ?? DownloadStatus.pending,
             modifiedTime: driveBook.modifiedTime,
+            readerFontSize: local?.readerFontSize ?? 30,
           );
         })
         .toList(growable: false);
@@ -149,6 +150,13 @@ class LibraryService {
       timestamp: DateTime.now().millisecondsSinceEpoch,
       isDirty: true,
     );
+  }
+
+  Future<void> updateReaderFontSize({
+    required String fileId,
+    required double fontSize,
+  }) {
+    return _database.updateReaderFontSize(fileId: fileId, fontSize: fontSize);
   }
 
   Future<void> applyCloudProgress({

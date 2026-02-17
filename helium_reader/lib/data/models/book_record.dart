@@ -21,6 +21,7 @@ class BookRecord {
     required this.syncError,
     required this.downloadStatus,
     required this.modifiedTime,
+    required this.readerFontSize,
   });
 
   final String fileId;
@@ -38,6 +39,7 @@ class BookRecord {
   final String syncError;
   final DownloadStatus downloadStatus;
   final int modifiedTime;
+  final double readerFontSize;
 
   bool get isDownloaded =>
       localPath.isNotEmpty && downloadStatus == DownloadStatus.ready;
@@ -64,6 +66,7 @@ class BookRecord {
     String? syncError,
     DownloadStatus? downloadStatus,
     int? modifiedTime,
+    double? readerFontSize,
   }) {
     return BookRecord(
       fileId: fileId ?? this.fileId,
@@ -81,6 +84,7 @@ class BookRecord {
       syncError: syncError ?? this.syncError,
       downloadStatus: downloadStatus ?? this.downloadStatus,
       modifiedTime: modifiedTime ?? this.modifiedTime,
+      readerFontSize: readerFontSize ?? this.readerFontSize,
     );
   }
 
@@ -101,6 +105,7 @@ class BookRecord {
       "syncError": syncError,
       "downloadStatus": downloadStatus.name,
       "modifiedTime": modifiedTime,
+      "readerFontSize": readerFontSize,
     };
   }
 
@@ -113,6 +118,7 @@ class BookRecord {
             ? SyncStatus.pending.name
             : SyncStatus.synced.name);
     final num rawPercent = (map["lastPercent"] as num?) ?? -1;
+    final num rawFontSize = (map["readerFontSize"] as num?) ?? 30;
 
     return BookRecord(
       fileId: (map["fileId"] as String?) ?? "",
@@ -136,6 +142,7 @@ class BookRecord {
         orElse: () => DownloadStatus.pending,
       ),
       modifiedTime: (map["modifiedTime"] as int?) ?? 0,
+      readerFontSize: rawFontSize.toDouble(),
     );
   }
 }

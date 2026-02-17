@@ -30,7 +30,7 @@ class AppDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 3,
+      version: 4,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE books (
@@ -48,7 +48,8 @@ class AppDatabase {
             syncStatus TEXT NOT NULL DEFAULT 'synced',
             syncError TEXT NOT NULL DEFAULT '',
             downloadStatus TEXT NOT NULL,
-            modifiedTime INTEGER NOT NULL
+            modifiedTime INTEGER NOT NULL,
+            readerFontSize REAL NOT NULL DEFAULT 30
           )
         ''');
 
@@ -86,6 +87,12 @@ class AppDatabase {
         if (oldVersion < 3) {
           await db.execute(
             "ALTER TABLE books ADD COLUMN locatorJson TEXT NOT NULL DEFAULT ''",
+          );
+        }
+
+        if (oldVersion < 4) {
+          await db.execute(
+            "ALTER TABLE books ADD COLUMN readerFontSize REAL NOT NULL DEFAULT 30",
           );
         }
       },
@@ -164,6 +171,18 @@ class AppDatabase {
             : SyncStatus.synced.name,
         "syncError": "",
       },
+      where: "fileId = ?",
+      whereArgs: <Object?>[fileId],
+    );
+  }
+
+  Future<void> updateReaderFontSize({
+    required String fileId,
+    required double fontSize,
+  }) async {
+    await _database.update(
+      "books",
+      <String, Object?>{"readerFontSize": fontSize},
       where: "fileId = ?",
       whereArgs: <Object?>[fileId],
     );
