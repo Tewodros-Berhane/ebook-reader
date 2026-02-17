@@ -76,7 +76,7 @@ Future<void> _bootstrap() async {
 
     final WindowOptions options = WindowOptions(
       size: Size(size?.width ?? 1200, size?.height ?? 780),
-      minimumSize: const Size(980, 620),
+      minimumSize: const Size(420, 620),
       center: true,
       title: AppConfig.appName,
       backgroundColor: const Color(0xFF212121),
