@@ -97,18 +97,24 @@ class LibraryService {
     return _database.listBooks();
   }
 
-  Future<BookRecord> ensureDownloaded(BookRecord book) async {
-    if (book.isDownloaded) {
+  Future<BookRecord> ensureDownloaded(
+    BookRecord book, {
+    bool forceRedownload = false,
+  }) async {
+    if (book.isDownloaded && !forceRedownload) {
       return book;
     }
 
+    final String targetPath = book.localPath.trim().isNotEmpty
+        ? book.localPath.trim()
+        : await _fileService.bookPath(book.fileId);
+
     await _database.updateDownload(
       fileId: book.fileId,
-      localPath: book.localPath,
+      localPath: targetPath,
       status: DownloadStatus.downloading,
     );
 
-    final String targetPath = await _fileService.bookPath(book.fileId);
     await _driveService.downloadFile(
       fileId: book.fileId,
       localPath: targetPath,

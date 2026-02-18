@@ -1,6 +1,7 @@
 import "dart:async";
 
 import "package:epub_view/epub_view.dart";
+import "package:epubx/epubx.dart" as epubx;
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -48,15 +49,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   Future<void> _initialize() async {
     try {
       _openedAt = DateTime.now();
-      final BookRecord ready = await ref
-          .read(libraryControllerProvider.notifier)
-          .prepareForReading(widget.book.fileId);
+      final _ReaderBootstrap bootstrap = await _bootstrapReader(
+        widget.book.fileId,
+      );
+      final BookRecord ready = bootstrap.book;
 
       final ReadingLocator? locator = ready.locator;
       final String startupCfi = (locator?.cfi ?? ready.lastCfi).trim();
 
       final EpubController controller = EpubController(
-        document: EpubDocument.openFile(ufile.File(ready.localPath)),
+        document: Future<epubx.EpubBook>.value(bootstrap.document),
         epubCfi: startupCfi.isEmpty ? null : startupCfi,
       );
 
@@ -97,6 +99,43 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _error = err.toString();
       });
     }
+  }
+
+  Future<_ReaderBootstrap> _bootstrapReader(String fileId) async {
+    final library = ref.read(libraryControllerProvider.notifier);
+    BookRecord ready = await _prepareReadableBook(fileId);
+
+    try {
+      final epubx.EpubBook document = await EpubDocument.openFile(
+        ufile.File(ready.localPath),
+      );
+      return _ReaderBootstrap(book: ready, document: document);
+    } catch (err) {
+      if (!_isZipSignatureError(err)) {
+        rethrow;
+      }
+
+      _logReader(
+        "Book $fileId reported invalid zip signature. Forcing re-download before opening.",
+      );
+    }
+
+    ready = await library.prepareForReading(fileId, forceRedownload: true);
+    final epubx.EpubBook document = await EpubDocument.openFile(
+      ufile.File(ready.localPath),
+    );
+    return _ReaderBootstrap(book: ready, document: document);
+  }
+
+  Future<BookRecord> _prepareReadableBook(String fileId) async {
+    final controller = ref.read(libraryControllerProvider.notifier);
+    return controller.prepareForReading(fileId);
+  }
+
+  bool _isZipSignatureError(Object err) {
+    final String message = err.toString().toLowerCase();
+    return message.contains("invalid zip signature") ||
+        message.contains("zip signature");
   }
 
   void _restoreSavedPosition(EpubController controller, BookRecord book) {
@@ -837,6 +876,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       child: wrappedScaffold,
     );
   }
+}
+
+class _ReaderBootstrap {
+  const _ReaderBootstrap({required this.book, required this.document});
+
+  final BookRecord book;
+  final epubx.EpubBook document;
 }
 
 class _ReaderProgressSnapshot {

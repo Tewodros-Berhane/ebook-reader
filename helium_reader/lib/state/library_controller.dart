@@ -77,13 +77,19 @@ class LibraryController extends StateNotifier<LibraryState> {
     await refreshFromDrive(folderId: folder?.id);
   }
 
-  Future<BookRecord> prepareForReading(String fileId) async {
+  Future<BookRecord> prepareForReading(
+    String fileId, {
+    bool forceRedownload = false,
+  }) async {
     final BookRecord? local = await _libraryService.bookById(fileId);
     if (local == null) {
       throw StateError("Book not found in local database.");
     }
 
-    final BookRecord ready = await _libraryService.ensureDownloaded(local);
+    final BookRecord ready = await _libraryService.ensureDownloaded(
+      local,
+      forceRedownload: forceRedownload,
+    );
     await reloadLocal();
     return ready;
   }
